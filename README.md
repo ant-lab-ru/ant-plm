@@ -90,6 +90,7 @@ erDiagram
   USER ||--o{ INVENTORY : "автор"
   USER ||--o{ WRITEOFF : "автор"
   USER ||--o{ REQUISITION : "автор"
+  USER ||--o{ ATTACHMENT : "загрузил"
 
   LOT ||--o{ STOCKMOVEMENT : ""
   LOT ||--o{ KITTINGLINE : ""
@@ -120,6 +121,14 @@ erDiagram
   REQUISITION ||--o{ LOT : "отпочкованные партии"
   LOCATION ||--o{ WRITEOFFLINE : ""
   LOCATION ||--o{ REQUISITIONLINE : ""
+
+  ITEM ||--o{ ATTACHMENT : "datasheet"
+  RECEIPT ||--o{ ATTACHMENT : "скан УПД"
+  TRANSFER ||--o{ ATTACHMENT : "скан накладной"
+  KITTING ||--o{ ATTACHMENT : "скан акта"
+  INVENTORY ||--o{ ATTACHMENT : "скан акта"
+  WRITEOFF ||--o{ ATTACHMENT : "скан акта"
+  REQUISITION ||--o{ ATTACHMENT : "скан акта"
 
   ITEM {
     int id PK
@@ -283,6 +292,23 @@ erDiagram
     int location_id FK
     decimal qty
   }
+  ATTACHMENT {
+    int id PK
+    string file "путь в MEDIA_ROOT (файл на диске, не BLOB)"
+    string filename "оригинальное имя для скачивания"
+    int size "байт"
+    string content_type "application/pdf | image/jpeg | image/png"
+    string label "опц. подпись (nullable)"
+    datetime uploaded_at
+    int user_id FK "кто загрузил"
+    int item_id FK "владелец: datasheet (nullable)"
+    int receipt_id FK "владелец: скан УПД (nullable)"
+    int transfer_id FK "владелец: скан накладной (nullable)"
+    int kitting_id FK "владелец: скан акта (nullable)"
+    int inventory_id FK "владелец: скан акта (nullable)"
+    int writeoff_id FK "владелец: скан акта (nullable)"
+    int requisition_id FK "владелец: скан акта (nullable)"
+  }
 ```
 
 ## Ключевые принципы модели
@@ -361,6 +387,23 @@ erDiagram
   норма). Привязка партии к строке выводится по `(purchase, item)`, поэтому пара
   `(purchase, item)` в `PurchaseLine` уникальна. Статус отражает покрытие
   (`draft → sent → partial → received`).
+- **Вложения (`Attachment`) — единая таблица, файлы на диске.** Файлы у любого
+  `Item` (datasheet'ы покупных; чертежи/спецификации производимых) и сканы
+  подписанных документов (`Receipt`/`Transfer`/`Kitting`/`Inventory`/`Writeoff`/
+  `Requisition`) — один файл = одна строка `Attachment`,
+  владелец 1:N. Сам файл лежит на диске (`FileField` → `MEDIA_ROOT`), **не BLOB в
+  БД** (иначе раздувание дампов и упор в `max_allowed_packet` на shared-MySQL); в
+  таблице — путь, имя, размер, `content_type` (PDF / JPEG / PNG), автор загрузки
+  (`user`) и дата. Связь с владельцем — **тот же приём «exclusive arc», что у
+  origin `Lot`**: семь nullable-FK (`item`/`receipt`/`transfer`/`kitting`/
+  `inventory`/`writeoff`/`requisition`), из которых **задан ровно один** (инвариант
+  через `CheckConstraint` в БД + `clean()` для понятной ошибки в форме). Выбран ради
+  настоящей FK-целостности и каскадного удаления — против `GenericForeignKey`
+  (теряет и то, и другое). Поля «тип файла» нет: datasheet это или скан — ясно из
+  контекста формы-владельца. Удаление владельца — `on_delete=CASCADE` + физическое
+  удаление файла с диска (форма переспрашивает и предупреждает, что файлы тоже
+  уйдут): доверяем пользователю, лишний повторный дроп лучше осиротевшего мусора на
+  диске.
 - **«Что ещё не заказано» и сверка балансов — отчёты поверх ledger**, а не
   отдельные мутабельные таблицы:
   `ещё заказать = надо (BOM×потребность) − склад (Lot) − заказано (открытые PurchaseLine)`.
